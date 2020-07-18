@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container">
+    <div class="row">
+        <div class="col-6 mx-auto col-md-4 order-md-2">
+            <img src="{{ url_for('static', filename='img/401k-EIP-Exchange-―-Participant-Portal-Icon-Optimized.png') }}" alt="" height="210" width="212">
+        </div>
+        <div class="col">
+            <h2>SQL Admin</h2>
+            <hr>
+
+            <mb-3>
+                <div class="form-group">
+                    <textarea class="form-control" id="sql_script" cols="10" rows="5" placeholder="Input your code hear"></textarea>
+                </div>
+                <button class="btn btn-primary" onclick="submit_run()">Run</button>
+            </mb-3>
+        </div>
+    </div>
+    <hr>
+    <div class="row">
+        <div class="col">
+            <div id="table-res" class="table-responsive">
+            </div>
+        </div>
+    </div>
+</div>
+<style>
+    .container {
+        position: relative;
+        padding: 3rem 15px;
+    }
+</style>
+{% endblock content %}
+
+{% block script %}
+<script>
+    let command_words = ['select', 'insert', 'update', 'delete', 'create'];
+    function submit_run() {
+        let sql = document.getElementById('sql_script');
+        let tbl_id = document.getElementById('table-res');
+
+        if (sql.value) {
+            let sql_str = sql.value.slice(0,6).toLowerCase();
+            if (command_words.indexOf(sql_str) == -1) {
+                tbl_id.innerHTML = '<p>Можно использовать только select, insert, update, delete, create</p>';
+                return
+            }
+            fetch('/run_sql_script', {
+                method: 'POST',
+                credentials: 'include',
+                body: JSON.stringify(sql.value),
+                cache: 'no-cache',
+                headers: new Headers({
+                    'content-type': 'application/json',
+                })
+            })
+            .then((resp) => {
+                if (resp.status != 200) {
+                    tbl_id.innerHTML = '<p>Response status was not 200</p>';
+                    return ;
+                }
+
+                resp.json().then((data) => {
+                    if (data['type'] == 'select'){
+                        let tbl = create_table(data['data']);
+                        tbl_id.innerHTML = tbl;
+                    }
+                    else if (data['type'] == 'insert') {
+                        tbl_id.innerHTML = '<p>Добавлена строка <mark>#' + data['data'] + '</mark></p>';
+                    }
+                    else if (data['type'] == 'update') {
+                        tbl_id.innerHTML = '<p>Изменено <mark>' + data['data'] + '</mark> строк</p>';
+                    }
+                    else if (data['type'] == 'delete') {
+                        tbl_id.innerHTML = '<p>Удалено <mark>' + data['data'] + '</mark> строк</p>';
+                    }
+                    else if (data['type'] == 'error') {
+                        tbl_id.innerHTML = '<p>Ошибка:<br><em>' + data['data'] + '</em></p>';
+                    }
+                })
+            })
+        } else {
+            alert('Input sql command!');
+        }
+    }
+
+    function create_table(data) {
+        let table;
+        let headers = Object.keys(data);
+        table = '<table class="table">';
+        table += '<thead class="thead-light"><tr>';
+        table += '<th scope="col">#</th>';
+        headers.forEach(
+            header => {
+                table += '<th scope="col">' + header + '</th>';
+            }
+        );
+        table += '</thead></tr>';
+
+        table += '<tbody>';
+        for (let i=0; i < data[headers[0]].length; i++) {
+            table += '<tr><th scope="row">' + i + '</th>';
+            headers.forEach(
+                header => {
+                    table += '<td>';
+                    table += data[header][i]
+                    table += '</td>';
+                }
+            );
+            table += '</tr>';
+        };
+        table += '</tbody>';
+
+        table += '</table>';
+        return table
+    }
+</script>
+{% endblock %}

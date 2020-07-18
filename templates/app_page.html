@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+
+{% block content %}
+<p>This is page for {{ app }}</p>
+<button id="run">START</button>
+<script type="text/javascript" src="{{ url_for('static', filename='apps.js') }}"></script>
+{% endblock content %}
