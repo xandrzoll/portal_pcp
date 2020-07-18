@@ -4,20 +4,21 @@ from flask import Flask
 
 def create_app():
     app_ = Flask(__name__)
-    app_.config.from_object(os.environ.get('APP_PORTAL_SETTINGS') or 'config.AlphaProdConfig')
+    app_.config.from_object(os.environ.get('APP_PORTAL_SETTINGS') or 'config.SigmaTestConfig')
 
     import apps.main.controllers as main
-    import apps.run_scripts.controllers as run_scripts
+    import apps.sending_orders.controllers as senor
 
     # здесь добавлять новые приложения
     app_.register_blueprint(main.main)
-    app_.register_blueprint(run_scripts.scrpt)
+    app_.register_blueprint(senor.senor)
     # в config['base_header'] приложения содержатся все элементы для базового заголовка
     app_.config['base_header'] = [
         {'name': 'Главная', 'href': '/'},
         {'name': 'Режимы работы', 'href': '/worktime'},
         {'name': 'Сим-карты', 'href': '#'},
         {'name': 'SQL Admin', 'href': '/SQL_Admin'},
+        {'name': 'Саня Б', 'href': '/senor'},
     ]
 
     return app_

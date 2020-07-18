@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+<main class="bd-masthead">
+    <div class="container">
+        <div class="row">
+            <div class="col-6 mx-auto col-md-4 order-md-2">
+                <img src="{{ url_for('static', filename='img/efwefsdf.jpg') }}" alt="" height="210" width="212">
+            </div>
+            <div class="col-md-8 order-md-1 text-center text-md-left pr-md-5">
+                <h1 class="mb-3">Какой то текст для заголовка</h1>
+
+                <div class="btn-toolbar mb-3" role="toolbar" aria-label="Toolbar with button groups">
+                    <button type="button" class="btn btn-outline-dark" onclick="submit_run_script()">Название скрипта</button>
+                </div>
+
+                <div id="script-result"></div>
+            </div>
+        </div>
+    </div>
+</main>
+<style>
+.bd-masthead {
+    margin-top: 20px;
+}
+</style>
+{% endblock content %}
+
+{% block script %}
+<script>
+    function submit_run_script() {
+        let res = document.getElementById('script-result');
+        fetch('/senor/run_script', {
+            method: 'POST',
+            credentials: 'include',
+            body: JSON.stringify('run'),
+            cache: 'no-cache',
+            headers: new Headers({
+                'content-type': 'application/json',
+            })
+        })
+        .then((resp) => {
+            if (resp.status != 200) {
+                res.innerHTML = '<p>Response status was not 200</p>';
+                return ;
+            }
+            resp.json().then((data) => {
+                    res.innerHTML = data;
+                })
+            })
+    }
+</script>
+{% endblock %}
