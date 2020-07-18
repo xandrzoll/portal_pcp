@@ -8,7 +8,6 @@ from flask import (
 
 
 senor = Blueprint('senor', __name__, url_prefix='/senor', static_folder='static', template_folder='templates')
-# senor = Blueprint('senor', __name__, url_prefix='/senor')
 
 
 @senor.route('/')
