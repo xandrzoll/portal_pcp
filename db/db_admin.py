@@ -1,5 +1,4 @@
 import sqlite3
-from z_dbworker import Tera
 
 
 MAX_ROWS_RETURN = 200
