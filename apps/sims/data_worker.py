@@ -2,10 +2,12 @@ import pandas as pd
 import re
 import sqlite3
 import pyodbc
+import datetime
+from config import cnf
 
 
-SQL_DATABASE = 'C:\work\Portal\db\database.db'
-TERA_STR_CONN = 'DSN=TDSB14'
+SQL_DATABASE = cnf.SQL_DATABASE
+TERA_STR_CONN = cnf.TERA_STR_CONN
 
 
 def load_delivery(delivery_type=0, path_to_file='', sh='Sheet1', save_db=True):
@@ -157,7 +159,7 @@ def get_orders_in_work():
 def load_sales(dt_max=None, save_db=True):
 
     if not dt_max:
-        dt_max = read_df('select max(dt) - 14 as mdt from SIMS_expense')
+        dt_max = read_df("select date(max(dt), '-14 days') as mdt from SIMS_expense")
         if dt_max.empty:
             dt_max = '2015-01-01'
         else:
@@ -184,10 +186,161 @@ def load_sales(dt_max=None, save_db=True):
     return sales
 
 
+def calculate_balance(dt_end='', save_db=True, check_last_balance=True):
+    if not dt_end:
+        dt_end = read_df('''
+            select max(dttm) as mdt from SIMS_orders
+            union all
+            select max(dt) as mdt from SIMS_delivery
+            union all
+            select max(dt) as mdt from SIMS_expense
+        ''').min()[0]
+        print(dt_end)
+
+    if check_last_balance:
+        last_bal = read_df("select vsp, dt, balance from SIMS_balances where dt = '2020-01-01'")
+        dt_start = '2020-01-01'
+    else:
+        dt_start = '2015-01-01'
+
+    delivery = read_df("select distinct vsp, dt, delivery_cnt as delivery from SIMS_delivery where dt > '{}'".format(dt_start))
+    sales = read_df("select vsp, dt, sum(expense_cnt) as sales from SIMS_expense where dt > '{}' group by vsp, dt".format(dt_start))
+    orders = read_df("""
+            select id as order_id, vsp, dt,  order_balance from (
+                select id, vsp, date(dttm) as dt, balance as order_balance, row_number() over (partition by vsp, date(dttm) order by dttm desc) as rn  from SIMS_orders
+                where dttm > '{}'
+            ) as T1
+            where rn = 1
+    """.format(dt_start))
+
+    sales['delivery'], sales['order_balance'], sales['is_order_balance'], sales['balance'] = 0, 0, 0, 0
+    delivery['sales'], delivery['order_balance'], delivery['is_order_balance'], delivery['balance'] = 0, 0, 0, 0
+    orders['delivery'], orders['sales'], orders['is_order_balance'], orders['balance'] = 0, 0, 1, 0
+
+    if check_last_balance:
+        last_bal['delivery'], last_bal['order_balance'], last_bal['is_order_balance'], last_bal['sales'] = 0, 0, 0, 0
+
+    cols = ['vsp', 'dt', 'sales', 'delivery', 'order_balance', 'is_order_balance', 'balance']
+
+    if check_last_balance:
+        data = sales[cols].append([delivery[cols], orders[cols], last_bal[cols]])
+    else:
+        data = sales[cols].append([delivery[cols], orders[cols]])
+
+    data = data.groupby(['vsp', 'dt'])[cols[2:]].sum().reset_index()
+    data = data.sort_values(by=['vsp', 'dt'])
+    data.fillna(0, inplace=True)
+
+    global last_vsp
+    last_vsp = data.loc[0, 'vsp']
+    global balance
+    balance = 0
+
+    def cumulative_sum(x):
+        global balance
+        global last_vsp
+
+        if x['is_order_balance'] == 1:
+            balance = x['order_balance']
+        elif x['vsp'] == last_vsp:
+            balance += x['delivery'] - x['sales'] + x['balance']
+
+        else:
+            balance = x['delivery'] - x['sales'] + x['balance']
+
+        if balance < 0:
+            balance = 0
+
+        last_vsp = x['vsp']
+        return balance
+
+    data['balance'] = data.apply(lambda x: cumulative_sum(x), axis=1)
+    data = data[data['dt'] <= dt_end]
+    data['real_balance'] = data.loc[data['vsp'].shift(-1) == data['vsp'], 'balance']
+    data['real_balance'] = data['real_balance'].shift() - data['sales'] + data['delivery']
+
+    last = data.groupby('vsp')['balance'].last().reset_index()
+    last['dt'] = dt_end
+
+    if save_db:
+        run_sql('delete from SIMS_balances where dt = {}'.format(dt_end))
+        save_df(last, 'SIMS_balances', if_exists='append')
+
+    return [last, data]
+
+
+def orders_worker():
+    sql = '''
+        select 
+            T1.id, 
+            T1.dttm, 
+            T1.dep_id, 
+            T1.vsp, 
+            T1.status, 
+            T1.address, 
+            T1.client_short, 
+            T1.phone, 
+            T1.order_count,
+            T1.balance as balance_from_order,
+            0 as calc_balance,
+            (select id from SIMS_ORDERS where dttm >= date(T1.dttm, '-14 day') and (vsp=T1.vsp or dep_id=T1.dep_id)  and id <> T1.id order by dttm desc limit 1) as id_prev_14,
+            (select id from SIMS_DELIVERY where vsp=T1.vsp order by dt desc limit 1) as id_prev_delivery,
+            (select dt from SIMS_DELIVERY where vsp=T1.vsp order by dt desc limit 1) as dt_prev_delivery,
+            (select delivery_cnt from SIMS_DELIVERY where vsp=T1.vsp order by dt desc limit 1) as count_prev_delivery,
+            (select sum(delivery_cnt) as d from SIMS_DELIVERY where vsp=T1.vsp) as delivery_all,
+            (select sum(expense_cnt) as sales from SIMS_expense where vsp = T1.vsp) as sales_all,
+            (select sum(case when dt >= date('now', 'start of month') then expense_cnt else 0 end) as sales from SIMS_expense where vsp = T1.vsp) as sales_current,
+            (select sum(case when dt >= date('now', 'start of month', '-1 month') and dt <= date('now', 'start of month', '-1 day') then expense_cnt else 0 end) as sales from SIMS_expense where vsp = T1.vsp) as sales_prev1,
+            (select sum(case when dt >= date('now', 'start of month', '-2 month') and dt <= date('now', 'start of month', '-1 month', '-1 day') then expense_cnt else 0 end) as sales from SIMS_expense where vsp = T1.vsp) as sales_prev2
+        from SIMS_ORDERS as T1
+        where T1.status not in ('Закрыто', 'Выполнено') and order_type = 0
+    '''
+    data = read_df(sql)
+    data['dt'] = data['dttm'].str[:10]
+    balances = calculate_balance(save_db=False)[1]
+    balances = balances.merge(
+        data[['vsp', 'dt']],
+        on='vsp',
+        suffixes=['', '_order'],
+        how='inner'
+    )
+    balances = balances[pd.to_datetime(balances['dt']) < pd.to_datetime(balances['dt_order'])]
+    balances = balances.groupby('vsp')['balance'].last().reset_index()
+
+    data = data.merge(
+        balances[['vsp','balance']],
+        on='vsp',
+        how='left',
+    )
+    data['calc_balance'] = data['balance']
+    data.drop(['balance'], axis=1)
+
+    def algoritmic_solution(x):
+        algo_status = ''
+
+        if x['id_prev_14']:
+            algo_status += 'Заявка до 14 дней; '
+
+        now_mon = datetime.date.today().strftime('%Y-%m')
+        if x['dt_prev_delivery']:
+            if now_mon == x['dt_prev_delivery'][:6]:
+                algo_status += 'В этом месяце уже была доставка; '
+
+        if x['calc_balance'] >= x['balance_from_order'] * 1.5 and x['calc_balance'] > 90:
+            algo_status += 'Расчетный остаток больше; '
+
+        return algo_status
+
+    data['algoritmic_solution'] = data.apply(algoritmic_solution, axis=1)
+
+    data.to_excel(r'\\Braga101\Vol2\SUDR_PCP_BR\SIMS\sources\orders_data_new.xlsx')
+
+
 def save_df(df, tbl_name, if_exists='replace'):
     try:
         conn = sqlite3.connect(SQL_DATABASE)
         df.to_sql(name=tbl_name, con=conn, if_exists=if_exists, index=False)
+        conn.commit()
         conn.close()
     except Exception as err:
         print(err)
@@ -230,4 +383,6 @@ if __name__ == '__main__':
     # orders = load_orders(path_to_file = r'\\Braga101\Vol2\SUDR_PCP_BR\SIMS\sources\orders.csv')
     # delivery = load_delivery(delivery_type=0, path_to_file=r'\\Braga101\Vol2\SUDR_PCP_BR\SIMS\sources\delivery.xlsx')
     # delivery = load_delivery(delivery_type=1, path_to_file=r'\\Braga101\Vol2\SUDR_PCP_BR\SIMS\sources\report.xls')
-    sales = load_sales()
+    # sales = load_sales()
+    last = calculate_balance(save_db=True, check_last_balance=False)
+    # orders_worker()

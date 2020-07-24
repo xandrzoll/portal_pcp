@@ -11,11 +11,15 @@ class Config:
 class AlphaProdConfig(Config):
     DEBUG = False
     HOST_APP = '10.222.124.199'
+    SQL_DATABASE = r'db/database.db'
+    TERA_STR_CONN = 'TDSB14'
 
 
 class SigmaTestConfig(Config):
     DEBUG = True
     HOST_APP = 'localhost'
+    SQL_DATABASE = r'db/database.db'
+    TERA_STR_CONN = ''
 
 
-cnf = AlphaProdConfig()
+cnf = SigmaTestConfig()
